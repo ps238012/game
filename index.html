@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>横スクロールアクションゲーム</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(to bottom, #87CEEB 0%, #87CEEB 70%, #90EE90 70%, #90EE90 100%);
+            font-family: 'Arial', sans-serif;
+        }
+        #gameContainer {
+            text-align: center;
+        }
+        canvas {
+            border: 4px solid #333;
+            background: linear-gradient(to bottom, #87CEEB 0%, #87CEEB 70%, #8B4513 70%, #8B4513 100%);
+            display: block;
+            margin: 0 auto;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+        #gameInfo {
+            margin-top: 20px;
+            color: #333;
+            font-size: 24px;
+            font-weight: bold;
+        }
+        #score {
+            color: #FF6B35;
+        }
+        #controls {
+            margin-top: 15px;
+            color: #555;
+            font-size: 16px;
+        }
+        .gameOver {
+            color: #FF0000;
+            font-size: 28px;
+            margin-top: 10px;
+        }
+        button {
+            margin-top: 10px;
+            padding: 12px 30px;
+            font-size: 18px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+        }
+        button:hover {
+            background: #45a049;
+            transform: translateY(-2px);
+        }
+        button:active {
+            transform: translateY(0);
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="800" height="400"></canvas>
+        <div id="gameInfo">
+            スコア: <span id="score">0</span> | コイン: <span id="coinCount">0</span> / 10 | 残り時間: <span id="timeLeft">60</span>秒
+        </div>
+        <div id="controls">
+            スペースキー または 画面タップ でジャンプ！（2段ジャンプ可能）
+        </div>
+        <div id="gameOverText" class="gameOver" style="display:none;">
+            ゲームオーバー！
+            <br>
+            <button onclick="restartGame()">もう一度プレイ</button>
+        </div>
+    </div>
+
+    <script src="game.js"></script>
+    <script>
+        // キャンバスとコンテキストの取得
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // ゲーム状態
+        let gameRunning = true;
+        let score = 0;
+        let gameSpeed = 3;
+        let frameCount = 0;
+        let coinCount = 0;
+        const TARGET_COINS = 10;
+        let timeLeft = 60;
+
+        // プレイヤーオブジェクト
+        const player = {
+            x: 100,
+            y: 280,
+            width: 40,
+            height: 40,
+            baseWidth: 40,
+            baseHeight: 40,
+            velocityY: 0,
+            jumping: false,
+            gravity: 0.6,
+            jumpPower: -12,
+            jumpCount: 0,
+            maxJumps: 2,
+            isPowerUp: false,
+            powerUpTime: 0
+        };
+
+        // ゲーム要素の配列
+        let obstacles = [];
+        let coins = [];
+        let powerUpItems = [];
+        let enemies = [];
+
+        // 地面の位置
+        const groundY = 320;
+
+        // 雲の配列
+        let clouds = [
+            {x: 100, y: 50, speed: 0.3},
+            {x: 400, y: 80, speed: 0.4},
+            {x: 650, y: 40, speed: 0.2}
+        ];
+
+        // プレイヤーを描画
+        function drawPlayer() {
+            // パワーアップ時のオーラ
+            if (player.isPowerUp) {
+                ctx.fillStyle = 'rgba(255, 215, 0, 0.3)';
+                ctx.fillRect(player.x - 10, player.y - 10, player.width + 20, player.height + 20);
+            }
+            
+            // プレイヤー本体
+            ctx.fillStyle = player.isPowerUp ? '#FFD700' : '#FF6B6B';
+            ctx.fillRect(player.x, player.y, player.width, player.height);
+            
+            // 目
+            ctx.fillStyle = 'white';
+            const eyeSize = player.width / 4;
+            ctx.fillRect(player.x + player.width * 0.2, player.y + player.height * 0.25, eyeSize, eyeSize);
+            ctx.fillRect(player.x + player.width * 0.55, player.y + player.height * 0.25, eyeSize, eyeSize);
+            
+            ctx.fillStyle = 'black';
+            const pupilSize = eyeSize * 0.4;
+            ctx.fillRect(player.x + player.width * 0.3, player.y + player.height * 0.35, pupilSize, pupilSize);
+            ctx.fillRect(player.x + player.width * 0.65, player.y + player.height * 0.35, pupilSize, pupilSize);
+            
+            // 口
+            ctx.fillStyle = 'black';
+            ctx.fillRect(player.x + player.width * 0.375, player.y + player.height * 0.7, player.width * 0.25, player.height * 0.075);
+        }
+
+        // 障害物を描画
+        function drawObstacle(obs) {
+            if (obs.type === 'cactus') {
+                // サボテン
+                ctx.fillStyle = '#2D5016';
+                ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+                ctx.fillRect(obs.x - 8, obs.y + 10, 8, 10);
+                ctx.fillRect(obs.x + obs.width, obs.y + 10, 8, 10);
+            } else if (obs.type === 'rock') {
+                // 岩
+                ctx.fillStyle = '#666666';
+                ctx.beginPath();
+                ctx.moveTo(obs.x + obs.width / 2, obs.y);
+                ctx.lineTo(obs.x + obs.width, obs.y + obs.height);
+                ctx.lineTo(obs.x, obs.y + obs.height);
+                ctx.closePath();
+                ctx.fill();
+                
+                ctx.fillStyle = '#888888';
+                ctx.beginPath();
+                ctx.arc(obs.x + obs.width / 2, obs.y + obs.height / 2, 8, 0, Math.PI * 2);
+                ctx.fill();
+            } else if (obs.type === 'spike') {
+                // トゲトゲ
+                ctx.fillStyle = '#8B0000';
+                for (let i = 0; i < 3; i++) {
+                    ctx.beginPath();
+                    ctx.moveTo(obs.x + i * 15, obs.y + obs.height);
+                    ctx.lineTo(obs.x + i * 15 + 7.5, obs.y);
+                    ctx.lineTo(obs.x + i * 15 + 15, obs.y + obs.height);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+            } else if (obs.type === 'bird') {
+                // 鳥（空中の障害物）
+                ctx.fillStyle = '#FF6347';
+                ctx.beginPath();
+                ctx.ellipse(obs.x + 20, obs.y + 15, 15, 10, 0, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // 翼
+                const wingOffset = Math.sin(frameCount * 0.2) * 5;
+                ctx.fillStyle = '#FF4500';
+                ctx.beginPath();
+                ctx.ellipse(obs.x + 5, obs.y + 15 + wingOffset, 10, 5, -0.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.ellipse(obs.x + 35, obs.y + 15 - wingOffset, 10, 5, 0.5, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // 目
+                ctx.fillStyle = 'white';
+                ctx.beginPath();
+                ctx.arc(obs.x + 25, obs.y + 12, 3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = 'black';
+                ctx.beginPath();
+                ctx.arc(obs.x + 26, obs.y + 12, 1.5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        // コインを描画
+        function drawCoin(coin) {
+            ctx.fillStyle = '#FFD700';
+            ctx.beginPath();
+            ctx.arc(coin.x + 15, coin.y + 15, 12, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.fillStyle = '#FFA500';
+            ctx.beginPath();
+            ctx.arc(coin.x + 15, coin.y + 15, 8, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // パワーアップアイテムを描画
+        function drawPowerUpItem(item) {
+            // アイテムの輝き
+            ctx.fillStyle = 'rgba(138, 43, 226, 0.3)';
+            ctx.beginPath();
+            ctx.arc(item.x + 15, item.y + 15, 18 + Math.sin(frameCount * 0.1) * 3, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // アイテム本体
+            ctx.fillStyle = '#8A2BE2';
+            ctx.beginPath();
+            ctx.arc(item.x + 15, item.y + 15, 15, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // 星マーク
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 20px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('⭐', item.x + 15, item.y + 15);
+        }
+
+        // 雲を描画
+        function drawCloud(cloud) {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+            ctx.beginPath();
+            ctx.arc(cloud.x, cloud.y, 20, 0, Math.PI * 2);
+            ctx.arc(cloud.x + 25, cloud.y, 25, 0, Math.PI * 2);
+            ctx.arc(cloud.x + 50, cloud.y, 20, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // 地面を描画
+        function drawGround() {
+            // 地面
+            ctx.fillStyle = '#8B4513';
+            ctx.fillRect(0, groundY, canvas.width, canvas.height - groundY);
+            
+            // 草
+            ctx.fillStyle = '#90EE90';
+            for (let i = 0; i < canvas.width; i += 40) {
+                ctx.fillRect(i, groundY - 5, 30, 5);
+            }
+        }
+
+        // ジャンプ処理
+        function jump() {
+            if (player.jumpCount < player.maxJumps && gameRunning) {
+                player.velocityY = player.jumpPower;
+                player.jumping = true;
+                player.jumpCount++;
+            }
+        }
+
+        // プレイヤーの更新
+        function updatePlayer() {
+            // パワーアップタイマー
+            if (player.isPowerUp) {
+                player.powerUpTime--;
+                if (player.powerUpTime <= 0) {
+                    player.isPowerUp = false;
+                    player.width = player.baseWidth;
+                    player.height = player.baseHeight;
+                }
+            }
+            
+            player.velocityY += player.gravity;
+            player.y += player.velocityY;
+
+            if (player.y >= groundY - player.height) {
+                player.y = groundY - player.height;
+                player.velocityY = 0;
+                player.jumping = false;
+                player.jumpCount = 0;
+            }
+        }
+
+        // 障害物の生成
+        function spawnObstacle() {
+            if (frameCount % 120 === 0) {
+                const obstacleTypes = [
+                    { type: 'cactus', width: 40, height: 50, y: groundY - 50 },
+                    { type: 'rock', width: 45, height: 40, y: groundY - 40 },
+                    { type: 'spike', width: 45, height: 35, y: groundY - 35 },
+                    { type: 'bird', width: 40, height: 30, y: groundY - 120 }
+                ];
+                
+                const randomObstacle = obstacleTypes[Math.floor(Math.random() * obstacleTypes.length)];
+                
+                obstacles.push({
+                    x: canvas.width,
+                    y: randomObstacle.y,
+                    width: randomObstacle.width,
+                    height: randomObstacle.height,
+                    type: randomObstacle.type
+                });
+            }
+        }
+
+        // コインの生成
+        function spawnCoin() {
+            if (frameCount % 150 === 0) {
+                coins.push({
+                    x: canvas.width,
+                    y: groundY - 100 - Math.random() * 80,
+                    width: 30,
+                    height: 30,
+                    collected: false
+                });
+            }
+        }
+
+        // パワーアップアイテムの生成
+        function spawnPowerUpItem() {
+            if (frameCount % 400 === 0) {
+                powerUpItems.push({
+                    x: canvas.width,
+                    y: groundY - 120 - Math.random() * 60,
+                    width: 30,
+                    height: 30,
+                    collected: false
+                });
+            }
+        }
+
+        // 障害物の更新
+        function updateObstacles() {
+            obstacles.forEach((obs, index) => {
+                obs.x -= gameSpeed;
+                if (obs.x + obs.width < 0) {
+                    obstacles.splice(index, 1);
+                    score += 10;
+                    document.getElementById('score').textContent = score;
+                }
+            });
+        }
+
+        // コインの更新
+        function updateCoins() {
+            coins.forEach((coin, index) => {
+                coin.x -= gameSpeed;
+                
+                // コイン取得判定
+                if (!coin.collected &&
+                    player.x < coin.x + coin.width &&
+                    player.x + player.width > coin.x &&
+                    player.y < coin.y + coin.height &&
+                    player.y + player.height > coin.y) {
+                    coin.collected = true;
+                    score += 50;
+                    coinCount++;
+                    document.getElementById('score').textContent = score;
+                    document.getElementById('coinCount').textContent = coinCount;
+                    
+                    if (coinCount >= TARGET_COINS) {
+                        setTimeout(() => gameOver(true), 500);
+                    }
+                }
+                
+                if (coin.x + coin.width < 0 || coin.collected) {
+                    coins.splice(index, 1);
+                }
+            });
+        }
+
+        // パワーアップアイテムの更新
+        function updatePowerUpItems() {
+            powerUpItems.forEach((item, index) => {
+                item.x -= gameSpeed;
+                
+                // アイテム取得判定
+                if (!item.collected &&
+                    player.x < item.x + item.width &&
+                    player.x + player.width > item.x &&
+                    player.y < item.y + item.height &&
+                    player.y + player.height > item.y) {
+                    item.collected = true;
+                    player.isPowerUp = true;
+                    player.powerUpTime = 300; // 5秒間
+                    player.width = player.baseWidth * 1.5;
+                    player.height = player.baseHeight * 1.5;
+                }
+                
+                if (item.x + item.width < 0 || item.collected) {
+                    powerUpItems.splice(index, 1);
+                }
+            });
+        }
+
+        // 雲の更新
+        function updateClouds() {
+            clouds.forEach(cloud => {
+                cloud.x -= cloud.speed;
+                if (cloud.x < -60) {
+                    cloud.x = canvas.width + 60;
+                }
+            });
+        }
+
+        // 衝突判定
+        function checkCollision() {
+            // パワーアップ中は無敵
+            if (player.isPowerUp) return;
+            
+            for (let obs of obstacles) {
+                if (player.x < obs.x + obs.width &&
+                    player.x + player.width > obs.x &&
+                    player.y < obs.y + obs.height &&
+                    player.y + player.height > obs.y) {
+                    gameOver(false);
+                    return;
+                }
+            }
+        }
+
+        // ゲームオーバー処理
+        function gameOver(isWin) {
+            gameRunning = false;
+            const gameOverDiv = document.getElementById('gameOverText');
+            if (isWin) {
+                gameOverDiv.innerHTML = `🎉 クリア！おめでとう！ 🎉<br>最終スコア: ${score}<br>コイン: ${coinCount} / ${TARGET_COINS}<br><button onclick="restartGame()">もう一度プレイ</button>`;
+            } else {
+                gameOverDiv.innerHTML = `ゲームオーバー！<br>スコア: ${score}<br>コイン: ${coinCount} / ${TARGET_COINS}<br><button onclick="restartGame()">もう一度プレイ</button>`;
+            }
+            gameOverDiv.style.display = 'block';
+        }
+
+        // ゲームリスタート
+        function restartGame() {
+            gameRunning = true;
+            score = 0;
+            coinCount = 0;
+            timeLeft = 60;
+            player.y = 280;
+            player.velocityY = 0;
+            player.jumping = false;
+            player.isPowerUp = false;
+            player.powerUpTime = 0;
+            player.width = player.baseWidth;
+            player.height = player.baseHeight;
+            obstacles = [];
+            coins = [];
+            powerUpItems = [];
+            frameCount = 0;
+            document.getElementById('score').textContent = score;
+            document.getElementById('coinCount').textContent = coinCount;
+            document.getElementById('timeLeft').textContent = timeLeft;
+            document.getElementById('gameOverText').style.display = 'none';
+            gameLoop();
+        }
+
+        // メインゲームループ
+        function gameLoop() {
+            if (!gameRunning) return;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 背景
+            ctx.fillStyle = '#87CEEB';
+            ctx.fillRect(0, 0, canvas.width, groundY);
+
+            // 雲
+            clouds.forEach(cloud => drawCloud(cloud));
+            updateClouds();
+
+            // 地面
+            drawGround();
+
+            // 障害物
+            spawnObstacle();
+            updateObstacles();
+            obstacles.forEach(obs => drawObstacle(obs));
+
+            // コイン
+            spawnCoin();
+            updateCoins();
+            coins.forEach(coin => {
+                if (!coin.collected) drawCoin(coin);
+            });
+
+            // パワーアップアイテム
+            spawnPowerUpItem();
+            updatePowerUpItems();
+            powerUpItems.forEach(item => {
+                if (!item.collected) drawPowerUpItem(item);
+            });
+
+            // プレイヤー
+            drawPlayer();
+            updatePlayer();
+
+            // 衝突判定
+            checkCollision();
+
+            frameCount++;
+            
+            // タイマー更新（60フレーム = 1秒）
+            if (frameCount % 60 === 0 && timeLeft > 0) {
+                timeLeft--;
+                document.getElementById('timeLeft').textContent = timeLeft;
+                
+                if (timeLeft === 0 && coinCount < TARGET_COINS) {
+                    gameOver(false);
+                }
+            }
+            
+            // 難易度上昇
+            if (frameCount % 300 === 0) {
+                gameSpeed += 0.3;
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // イベントリスナー
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') {
+                e.preventDefault();
+                jump();
+            }
+        });
+
+        canvas.addEventListener('click', jump);
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            jump();
+        });
+
+        // ゲーム開始
+        gameLoop();
+    </script>
+</body>
+</html>
